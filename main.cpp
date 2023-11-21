@@ -1,274 +1,157 @@
-/**
-Main program 
-@brief reads zip codes in from a csv file, then prints a table organized by state with most east, west, north, and south zips
-@author Jake Haapoja, Ken Stearns, Nathan O'Connor, Zach Sawicki
-*/
-
-/**
-Header Record Architecture:
-file structure type {blocked sequence set with comma separated fields, and length-indicated records}
-version of your file structure type (we may add features in subsequent versions)	--> 1.0
-header record size  --> 512
-number of bytes for each record size integer (if fixed-size) --> 2
-size format type {ASCII or binary}	--> ASCII
-block size {default to (512 Bytes / block)} -->512
-minimum block capacity {default to 50%}, except for, possibly, the last block --> 50
-index file name
-index file schema information {how to read the index file format}
-record count
-block count
-count of fields per record
-for each field:
-	-name or ID
-	-type schema (format to read or write)
-indicate (ordinally) which field serves as the primary key
-RBN link to the block avail-list {RBN ↔ Relative Block Number}
-RBN link to the active sequence set list
-stale flag
-*/
-
 #include "PrimaryIndex.h"
 #include "delimBuffer.h"
 #include "LengthBuffer.h"
-#include "zipCode.h"
-#include "BFile.h" 
+#include "ZipCode.h"
+#include "BFile.h"
 #include "Buffer_Record.h"
-#include <vector>
+#include "CSVReader.h"
 #include <iostream>
+#include <fstream>
+#include <string>
+
 using namespace std;
 
-
-const string manual =
-"sample input: programname -r filename.csv\noptions: \n-r <filename.csv>\n-z <zip code> \nprogram must be run once with a csv file to generate the datafile and index";
-
-void addRecord(BFile& b);
-void delRecord(BFile& b, string arg);
-
-/*
-* @brief main function that takes command line arguments
-* @param argument count, string of arguments
-*/
+// Declarations for helper functions
+void analyzeCSV(CSVReader &csvReader);
+void addRecord(BFile& bf);
+void delRecord(BFile& bf, const string& arg);
+void handleFileImport(const string& filename);
+void searchDatabase(const PrimaryIndex& indexList);
+void displayRecordFromOffset(ifstream& FS, unsigned long offset);
 
 int main(int argc, char* argv[]) {
-	
-	fstream iFile, dFile;
-	ifstream inFile;	// filestream objects
-	string filename;
-	int queryZip;
-	unsigned long offset = 0;
-	LengthBuffer indicated;
+    // Process CSV file at the beginning
+    std::string csvFile = "us_postal_codes.csv";
+    std::cout << "Processing us_postal_codes.csv.\n" << std::endl;
+    CSVReader csvReader(csvFile);
+    analyzeCSV(csvReader);
 
-	for (int i = 0; i < argc; i++) {
-		cout << argv[i] << ' ';
-	}
+    // Process command-line arguments
+    if (argc < 2) {
+        cout << "Usage: " << argv[0] << " -option [additional arguments]" << endl;
+        return 1;
+    }
+    
+    string option = argv[1];
+    bFile bf;
 
-	/*if (argc != 3) {
-		cout << "Invalid Input" << endl << manual;
-		return -1;
-	}*/
-	string arg2, arg1 = argv[1];
-	if (argc == 3)
-		arg2 = argv[2];
+    if (option == "-pd") {
+        cout << bf.physicalDump();  // Updated method name
+    } else if (option == "-ld") {
+        cout << bf.logicalDump();  // Updated method name
+    } else if (option == "-a") {
+        addRecord(bf);  // Updated function call
+    } else if (option == "-d" && argc == 3) {
+        delRecord(bf, argv[2]);  // Updated function call
+    } else if (option == "-r" && argc == 3) {
+        handleFileImport(argv[2]);  // Unchanged
+    } else if (option == "-z" && argc == 3) {
+        PrimaryIndex indexList("primIndex.index", "data.txt);
+        ifstream FS("data.txt");
+        unsigned long offset = indexList.search(stoi(argv[2]));
+        displayRecordFromOffset(FS, offset);
+    } else {
+        cout << "Invalid arguments" << endl;
+        return -1;
+    }
 
-	if (arg1 == "-pd") { // phyisical order dump
+    return 0;
+}
+void addRecord(BFile& b) {
+    ZipCode address;  // Correct class name
+    string temporary;
+    float lat, lon;
+    int zip;
 
-		blockFile b;
-		cout << b.pdump();
-	}
-	else if (arg1 == "-ld") { // logical order dump
+    cout << "Zip Code: ";
+    cin >> temporary;
+    zip = stoi(temporary);  // Convert string to int
+    address.setNum(zip);
 
+    cout << "City: ";
+    cin >> temporary;
+    address.setCity(temporary);
 
-		blockFile b;
-		cout << b.ldump();
-	
-	}
-	else if(arg1 == "-b"){
+    cout << "State Code: ";
+    cin >> temporary;
+    address.setStateCode(temporary);
 
-		blockFile b;
+    cout << "County: ";
+    cin >> temporary;
+    address.setCounty(temporary);
 
+    cout << "Latitude: ";
+    cin >> lat;  // Directly read as float
+    address.setLat(lat);
 
-	}
-	else if(arg1 == "-a"){ //add a record
+    cout << "Longitude: ";
+    cin >> lon;  // Directly read as float
+    address.setLon(lon);
 
-		blockFile b;
-		addRecord(b);
-
-	}
-	else if(arg1 == "-d"){ //delete a record
-
-		blockFile b;
-		delRecord(b, arg2);
-
-	}
-	else if(arg1 == "-r") {	// translate delim file to LI, offers to search
-
-		char response;
-		int zipResponse;
-
-		filename = argv[2];
-		inFile.open(filename); // access the data file and associate to filestream object
-
-		PrimaryIndex indexList(inFile);
-
-		iFile.open("IndexFile.index");
-		dFile.open("DataFile.licsv");
-
-		cout << "file imported successfully\n";
-		cout << "do you want to search the database? (Y/N): ";
-		cin >> response;
-		if (tolower(response) == 'y') {
-			cout << "\nPlease enter a valid zip: ";
-			cin >> zipResponse;
-
-			offset = indexList.search(zipResponse);
-			if (offset == 0) { cout << "Sorry! We can't seem to find that one."; return -2; }
-			indicated.read(dFile, offset);
-			for (int i = 0; i < 6; i++) {
-				string temp = "";
-				switch(i) {
-				case 0:
-					cout << "\nZip Code: ";
-					indicated.unpack(temp);
-					cout << temp;
-					break;
-				case 1: 
-					cout << " Place Name: ";
-					indicated.unpack(temp);
-					cout << temp;
-					break;
-				case 2:
-					cout << " State: ";
-					indicated.unpack(temp);
-					cout << temp;
-					break;
-				case 3:
-					cout << " County: ";
-					indicated.unpack(temp);
-					cout << temp;
-					break;
-				case 4:
-					cout << " Lat: ";
-					indicated.unpack(temp);
-					cout << temp;
-					break;
-				default:
-					cout << " Long: ";
-					indicated.unpack(temp);
-					cout << temp;
-					break;
-				}
-			}
-		}
-
-		return 1;
-	}
-	else if (argc == 3 && arg1 == "-z") {	// search for zip
-		
-		PrimaryIndex indexList("IndexFile.index", "DataFile.licsv");
-		queryZip = stoi(arg2);
-		offset = indexList.search(queryZip);
-		if (offset == 0) { cout << "Sorry! We can't seem to find that one.\n"; return -2; }
-
-		dFile.open("DataFile.licsv");
-		indicated.read(dFile, offset);
-		dFile.close();
-
-		for (int i = 0; i < 6; i++) {
-			string temp = "";
-			switch(i) {
-			case 0:
-				cout << "Zip Code: ";
-				indicated.unpack(temp);
-				cout << temp;
-				break;
-			case 1: 
-				cout << " Place Name: ";
-				indicated.unpack(temp);
-				cout << temp;
-				break;
-			case 2:
-				cout << " State: ";
-				indicated.unpack(temp);
-				cout << temp;
-				break;
-			case 3:
-				cout << " County: ";
-				indicated.unpack(temp);
-				cout << temp;
-				break;
-			case 4:
-				cout << " Lat: ";
-				indicated.unpack(temp);
-				cout << temp;
-				break;
-			default:
-				cout << " Long: ";
-				indicated.unpack(temp);
-				cout << temp;
-				break;
-			}
-		}
-	}
-
-	else {	// invalid arguments 
-
-		cout << "invalid arguments";
-		return -1;
-	}
-	
-
-	cout << endl << "Hello World!" << endl;
-
-	dFile.close();  // definitely nothing to see here
-	iFile.close();
-	inFile.close();
-
-	return 1;
+    if (b.addRecord(address))  // Correct object name
+        cout << "Record added\n";
+    else
+        cout << "Record not added\n";
 }
 
-void addRecord(blockFile& b){
 
-	ZipCode z;
-	string temporary;
-
-
-	cout << "Zip Code: ";
-	cin >> temporary;
-	z.setNum(stoi(temporary));
-
-	cout << "City: ";
-	cin >> temporary;
-	z.setCity(temporary);
-
-	cout << "State Code: ";
-	cin >> temporary;
-	z.setStateCode(temporary);
-
-	cout << "County: ";
-	cin >> temporary;
-	z.setCounty(temporary);
-
-	cout << "Latitude: ";
-	cin >> temporary;
-	z.setLat(stoi(temporary));
-
-	cout << "Longitude: ";
-	cin >> temporary;
-	z.setLon(stoi(temporary));
-
-	if (b.addRecord(z))
-		cout << "Record added successfully\n";
+void delRecord(blockFile& b, const string& arg) {
+    if (b.delRecord(arg))
+		cout << "Record deleted \n";
 	else
-		cout << "Failed to add record\n";
-
+		cout << "Failed to delete \n";
 }
 
-void delRecord(blockFile& b, string arg){
+void handleFileImport(const string& filename) {
+    ifstream inFile(filename);
+    primaryIndex indexList(inFile);
+    cout << "File imported successfully" << endl;
+    cout << "Do you want to search the database? (Y/N): ";
+    char response;
+    cin >> response;
+    if (tolower(response) == 'y') {
+        searchDatabase(indexList);
+    }
+}
+
+void searchDatabase(const PrimaryIndex& indexList) {
+    int valid_zip;
+    cout << "Please enter a valid zip: ";
+    cin >> valid_zip;
+    unsigned long offset = indexList.search(valid_zip;);
+    if (offset == 0) {
+        cout << "cant find zip" << endl;
+        return;
+    }
+    ifstream dFile("data.txt");
+    displayRecordFromOffset(FS, offset);
+}
+
+void displayRecordFromOffset(ifstream& FS, unsigned long offset) {
+    LengthBuffer showing_addr;
+    indicated.read(FS, offset);
+    for (int i = 0; i < 6; ++i) {
+        string temp;
+        showing_addr.unpack(temp);
+        cout << (i == 0 ? "Zip Code: " : i == 1 ? "Place Name: " : i == 2 ? "State: " : i == 3 ? "County: " : i == 4 ? "Lat: " : "Long: ") << temp << endl;
+    }
+}
+/**
+ * @brief Analyzes and displays state statistics from a CSVReader object.
+ * @param csvReader The CSVReader object to analyze.
+ * @pre The CSVReader object is open and initialized.
+ * @post State statistics are displayed for the given CSVReader object.
+ */
+void analyzeCSV(CSVReader &csvReader) {
+    //CSVReader csvReader(fileName);
+    if (!csvReader.isOpen()) {
+        std::cerr << "Failed to open CSV file." << std::endl;
+        return;
+    }
+    // Read and process the CSV file.
+    csvReader.ReadFile();
 
 
-	if (b.delRecord(arg))
-		cout << "Record deleted successfully\n";
-	else
-		cout << "Failed to delete record\n";
-
+    // Close the CSV file.
+    csvReader.close();
 }
